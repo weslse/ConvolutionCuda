@@ -16,21 +16,22 @@
 /// 잠재적으로 문제가 생길 수 있으니 지양해야 하는 코드
 /// NVIDIA 비권장
 //for __syncthreads()
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
 
 #ifndef __CUDACC__ 
 #define __CUDACC__
 #endif
-#include <device_functions.h>
+#include "device_functions.h"
 
 
 #include <stdio.h>
-
+#include <stdlib.h>
+#include <time.h>
 /*
 // define 용어 설명
 //
-// TILE 
+// TILE
 // 슬라이딩 윈도우 기법에서의 윈도우 같은 역할
 // 여러 개의 TILE로 OUTPUT 결정
 //
@@ -49,11 +50,13 @@
 // 1D
 #define ARR_SIZE 7
 #define MASK_SIZE 5
+#define TILE_1D_SIZE 5
 
 // 2D
-#define O_TILE_WIDTH 5
-#define O_TILE_HEIGHT 5
+#define O_TILE_WIDTH 9
+#define O_TILE_HEIGHT 9
 
+#define IMG_WIDTH  9
 #define TILE_WIDTH 5
 #define MASK_WIDTH 3
 
@@ -65,10 +68,10 @@ void printArr(float* arr) {
 	printf("\n");
 }
 
-void printArr2D(float arr[PITCH][PITCH]) {
-	for (int i = 0; i < PITCH; i++) {
-		for (int j = 0; j < PITCH; j++)
-			printf("%4.3f  ", arr[i][j]);
+void printArr2D(float arr[O_TILE_WIDTH * O_TILE_HEIGHT]) {
+	for (int i = 0; i < O_TILE_WIDTH; i++) {
+		for (int j = 0; j < O_TILE_HEIGHT; j++)
+			printf("%4.3f  ", arr[i * O_TILE_WIDTH + j]);
 		printf("\n");
 	}
 }
@@ -76,18 +79,18 @@ void printArr2D(float arr[PITCH][PITCH]) {
 
 
 /// 7.2 Simple Convolution 1D
-//__global__ void convolution_1D_basic_kernel(float *N, float *M, float *P, int Mask_Width, int Width)
+//__global__ void convolution_1D_basic_kernel(float *src, float *mask, float *dst, int Mask_Width, int Width)
 //{
 //	int i = blockIdx.x * blockDim.x + threadIdx.x;
 //
-//	float Pvalue = 0.f;
-//	int N_start_point = i - (Mask_Width / 2);
+//	float result = 0.f;
+//	int start_point = i - (Mask_Width / 2); // thread마다 시작 지점 계산
 //	for (int j = 0; j < Mask_Width; j++) {
-//		if (N_start_point + j >= 0 && N_start_point + j < Width) {
-//			Pvalue += N[N_start_point + j] * M[j];
+//		if (start_point + j >= 0 && start_point + j < Width) {
+//			result += src[start_point + j] * mask[j];
 //		}
 //	}
-//	P[i] = Pvalue;
+//	dst[i] = result;
 //}
 //
 //int main()
@@ -121,18 +124,18 @@ void printArr2D(float arr[PITCH][PITCH]) {
 /// 7.3 Convolution 1D with Contant Mask
 //__constant__ float Mask[MASK_SIZE];
 //
-//__global__ void convolution_1D_const_kernel(float *N, float *P, int Mask_Width, int Width)
+//__global__ void convolution_1D_const_kernel(float *Src, float *Dst, int Mask_Width, int Width)
 //{
 //	int i = blockIdx.x * blockDim.x + threadIdx.x;
 //
-//	float Pvalue = 0.f;
-//	int N_start_point = i - (Mask_Width / 2);
+//	float result = 0.f;
+//	int Conv_start_point = i - (Mask_Width / 2); // thread마다 시작 지점 계산
 //	for (int j = 0; j < Mask_Width; j++) {
-//		if (N_start_point + j >= 0 && N_start_point + j < Width) {
-//			Pvalue += N[N_start_point + j] * Mask[j];
+//		if (Conv_start_point + j >= 0 && Conv_start_point + j < Width) {
+//			result += Src[Conv_start_point + j] * Mask[j];
 //		}
 //	}
-//	P[i] = Pvalue;
+//	Dst[i] = result;
 //}
 //
 //int main()
@@ -164,33 +167,33 @@ void printArr2D(float arr[PITCH][PITCH]) {
 
 /// 7.4 Convolution 1D with Halo cells
 //__constant__ float Mask[MASK_SIZE];
-//__global__ void convolution_1D_halo_kernel(float *N, float *P, int Mask_Width, int Width)
+//__global__ void convolution_1D_halo_kernel(float *Src, float *Dst, int Mask_Width, int Width)
 //{
 //	int i = blockIdx.x * blockDim.x + threadIdx.x;
-//	__shared__ float N_halo[ARR_SIZE + MASK_SIZE - 1];
+//	__shared__ float tile_halo[TILE_1D_SIZE + MASK_SIZE - 1];
 //
 //	int n = Mask_Width / 2;
 //
 //	int halo_index_left = (blockIdx.x - 1) * blockDim.x + threadIdx.x;
 //	if (threadIdx.x >= blockDim.x - n) {
-//		N_halo[threadIdx.x - (blockDim.x - n)]
-//			= (halo_index_left < 0) ? 0 : N[halo_index_left];
+//		tile_halo[threadIdx.x - (blockDim.x - n)]
+//			= (halo_index_left < 0) ? 0 : tile_halo[halo_index_left];
 //	}
 //
-//	N_halo[n + threadIdx.x] = N[i];
+//	tile_halo[n + threadIdx.x] = tile_halo[i];
 //
 //	int halo_index_right = (blockIdx.x - 1) * blockDim.x + threadIdx.x;
 //	if (threadIdx.x < n) {
-//		N_halo[n + blockDim.x + threadIdx.x] =
-//			(halo_index_right >= Width) ? 0 : N[halo_index_right];
+//		tile_halo[n + blockDim.x + threadIdx.x] =
+//			(halo_index_right >= Width) ? 0 : tile_halo[halo_index_right];
 //	}
 //	__syncthreads();
 //
-//	float Pvalue = 0.f;
+//	float result = 0.f;
 //	for (int j = 0; j < Mask_Width; j++) {
-//		Pvalue += N_halo[threadIdx.x + j] * Mask[j];
+//		result += tile_halo[threadIdx.x + j] * Mask[j];
 //	}
-//	P[i] = Pvalue;
+//	Dst[i] = result;
 //}
 //
 //int main()
@@ -210,7 +213,7 @@ void printArr2D(float arr[PITCH][PITCH]) {
 //	float* devResult = nullptr;
 //	cudaMalloc(&devResult, sizeof(float) * ARR_SIZE);
 //
-//	convolution_1D_halo_kernel << < 1, ARR_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
+//	convolution_1D_halo_kernel << < ceil((float)ARR_SIZE / TILE_1D_SIZE), TILE_1D_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
 //
 //	cudaMemcpy(hstResult, devResult, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 //
@@ -222,33 +225,33 @@ void printArr2D(float arr[PITCH][PITCH]) {
 
 /// 7.5 Convolution 1D using general caching
 //__constant__ float Mask[MASK_SIZE];
-//__global__ void convolution_1D_caching_kernel(float *N, float *P, int Mask_Width, int Width)
+//__global__ void convolution_1D_caching_kernel(float *Src, float *Dst, int Mask_Width, int Width)
 //{
 //	int i = blockIdx.x * blockDim.x + threadIdx.x;
-//	__shared__ float N_sm[ARR_SIZE];
+//	__shared__ float tile_sm[TILE_1D_SIZE];
 //
-//	N_sm[threadIdx.x] = N[i];
+//	tile_sm[threadIdx.x] = Src[i];
 //
 //	__syncthreads();
 //
 //	int This_tile_start_point = blockIdx.x * blockDim.x;
 //	int Next_tile_start_point = (blockIdx.x + 1) * blockDim.x;
-//	int N_start_point = i - (Mask_Width / 2);
+//	int Conv_start_point = i - (Mask_Width / 2);
 //
-//	float Pvalue = 0.f;
+//	float result = 0.f;
 //	for (int j = 0; j < Mask_Width; j++) {
-//		int N_index = N_start_point + j;
+//		int N_index = Conv_start_point + j;
 //		if (N_index >= 0 && N_index < Width) {
 //			if ((N_index >= This_tile_start_point)
 //				&& (N_index < Next_tile_start_point)) {
-//				Pvalue += N_sm[threadIdx.x + j - (Mask_Width / 2)] * Mask[j];
+//				result += tile_sm[threadIdx.x + j - (Mask_Width / 2)] * Mask[j];
 //			}
 //			else {
-//				Pvalue += N_sm[threadIdx.x + j] * Mask[j];
+//				result += Src[N_index] * Mask[j];
 //			}
 //		}
 //	}
-//	P[i] = Pvalue;
+//	Dst[i] = result;
 //}
 //
 //int main()
@@ -268,7 +271,7 @@ void printArr2D(float arr[PITCH][PITCH]) {
 //	float* devResult = nullptr;
 //	cudaMalloc(&devResult, sizeof(float) * ARR_SIZE);
 //
-//	convolution_1D_caching_kernel << < 1, ARR_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
+//	convolution_1D_caching_kernel << < ceil((float)ARR_SIZE / TILE_1D_SIZE), TILE_1D_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
 //
 //	cudaMemcpy(hstResult, devResult, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 //
@@ -281,78 +284,95 @@ void printArr2D(float arr[PITCH][PITCH]) {
 /// 7.6 Convolution 2D with Halo cells
 // 책에서는 const float __restrict__ *M 이지만, 
 // const float* __restrict__ M가 올바른 사용
-// data가 이미 패딩이 되어 있다고 가정
-__global__ void convolution_2D_tiled_kernel(float *data, float *P, int Mask_Width,
+// 또한 책에서 소개한 부분에 오류가 있어
+// 인터넷에서 찾은 코드를 응용하였음
+#define W_SM ((TILE_WIDTH) + (MASK_WIDTH) - 1)
+__global__ void convolution_2D_tiled_kernel(float *inputData, float *outputData,
 	int width, int pitch, int height, int channels,
 	const float* __restrict__ M)
 {
-	int tx = threadIdx.x;
-	int ty = threadIdx.y;
-	int row_o = blockIdx.y * O_TILE_WIDTH * ty;
-	int col_o = blockIdx.x * O_TILE_WIDTH * tx;
+	__shared__ float N_ds[W_SM][W_SM];
 
-	int row_i = row_o - (Mask_Width / 2);
-	int col_i = col_o - (Mask_Width / 2);
+	int maskRadius = MASK_WIDTH / 2;
 
-	__shared__ float N_ds[TILE_WIDTH + MASK_WIDTH - 1][TILE_WIDTH + MASK_WIDTH - 1];
-	if ((row_i >= 0) && (row_i < height) &&
-		(col_i >= 0) && (col_i < width)) {
-		N_ds[ty][tx] = data[row_i * pitch + col_i];
+	int dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
+	int destY = dest / W_SM;		//col of shared memory
+	int destX = dest % W_SM;		//row of shared memory
+	int srcY = blockIdx.y *TILE_WIDTH + destY - maskRadius; //row index to fetch data from input image
+	int srcX = blockIdx.x *TILE_WIDTH + destX - maskRadius;	//col index to fetch data from input image
+
+	if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
+		N_ds[destY][destX] = inputData[srcY * width + srcX];
+	else
+		N_ds[destY][destX] = 0;
+
+
+	dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
+	destY = dest / W_SM;
+	destX = dest % W_SM;
+	srcY = blockIdx.y *TILE_WIDTH + destY - maskRadius;
+	srcX = blockIdx.x *TILE_WIDTH + destX - maskRadius;
+	if (destY < W_SM) {
+		if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
+			N_ds[destY][destX] = inputData[srcY *width + srcX];
+		else
+			N_ds[destY][destX] = 0;
 	}
-	else {
-		N_ds[ty][tx] = 0.0f;
-	}
+
 	__syncthreads();
 
 	float output = 0.0f;
-	if (ty < O_TILE_WIDTH && tx < O_TILE_WIDTH) {
-		for (int i = 0; i < MASK_WIDTH; i++) {
-			for (int j = 0; j < MASK_WIDTH; j++) {
-				output += M[i * MASK_WIDTH + j] * N_ds[i + ty][j + tx];
-			}
-		}
-		if (row_o < height && col_o < width) {
-			P[row_o * width + col_o] = output; // 결과 저장
-		}
-	}
+	for (int y = 0; y < MASK_WIDTH; y++)
+		for (int x = 0; x < MASK_WIDTH; x++)
+			output += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * MASK_WIDTH + x];
+
+	int oY = blockIdx.y * TILE_WIDTH + threadIdx.y;
+	int oX = blockIdx.x * TILE_WIDTH + threadIdx.x;
+	
+	if (oY < height && oX < width)
+		outputData[oY * width + oX] = output;
+
 	__syncthreads();
 }
 
 int main()
 {
-	float hstSrc[PITCH][PITCH]
-		= {
-			{ 0, 0, 0, 0, 0, 0, 0 },
-			{ 0, 1, 2, 3, 4, 5, 0 },
-			{ 0, 2, 4, 6, 8, 0, 0 },
-			{ 0, 1, 2, 3, 4, 5, 0 },
-			{ 0, 2, 4, 6, 8, 0, 0 },
-			{ 0, 1, 2, 3, 4, 5, 0 },
-			{ 0, 0, 0, 0, 0, 0, 0 }
-	};
+	float hstSrc[IMG_WIDTH * IMG_WIDTH];
+	srand((unsigned int)time(NULL));
 
-	float hstMask[MASK_WIDTH][MASK_WIDTH] = { 1 / 9.f }; // 3*3 kernel mean filter
-	float hstResult[O_TILE_WIDTH][O_TILE_WIDTH] = { 0.f };
+	for (int i = 0; i < IMG_WIDTH; i++) {
+		for (int j = 0; j < IMG_WIDTH; j++) {
+			hstSrc[i * IMG_WIDTH + j] = 3;//rand() % 10;
+		}
+	}
+	float hstMask[MASK_WIDTH * MASK_WIDTH]
+		= { (1 / 9.f), (1 / 9.f), (1 / 9.f),
+			(1 / 9.f), (1 / 9.f), (1 / 9.f),
+			(1 / 9.f), (1 / 9.f), (1 / 9.f)
+	}; // 3*3 kernel mean filter
 
-	float* devSrc = nullptr;
-	cudaMalloc(&devSrc, sizeof(float) * PITCH * PITCH);
-	cudaMemcpy(devSrc, hstSrc, sizeof(float) * PITCH * PITCH, cudaMemcpyKind::cudaMemcpyHostToDevice);
+	float hstResult[O_TILE_WIDTH * O_TILE_WIDTH] = { 0.f };
 
-	float* devMask = nullptr;
+	float* devSrc;
+	cudaError_t status;
+	status = cudaMalloc(&devSrc, sizeof(float) * IMG_WIDTH * IMG_WIDTH);
+	cudaMemcpy(devSrc, hstSrc, sizeof(float) * IMG_WIDTH * IMG_WIDTH, cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+	float* devMask;
 	cudaMalloc(&devMask, sizeof(float) * MASK_WIDTH * MASK_WIDTH);
 	cudaMemcpy(devMask, hstMask, sizeof(float) * MASK_WIDTH * MASK_WIDTH, cudaMemcpyKind::cudaMemcpyHostToDevice);
 
 
-	float* devResult = nullptr;
+	float* devResult;
 	cudaMalloc(&devResult, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH);
 
+	dim3 gridDim = dim3(ceil((float)IMG_WIDTH / TILE_WIDTH), ceil((float)IMG_WIDTH / TILE_WIDTH));
+	dim3 blockDim = dim3(TILE_WIDTH, TILE_WIDTH);
+	convolution_2D_tiled_kernel << < gridDim, blockDim >> > (devSrc, devResult, IMG_WIDTH, PITCH, IMG_WIDTH, 1, devMask);
 
-	convolution_2D_tiled_kernel << < dim3( 1, 1), dim3(O_TILE_WIDTH, O_TILE_WIDTH) >> > (devSrc, devResult, MASK_WIDTH,
-		TILE_WIDTH, PITCH, TILE_WIDTH, 3, devMask);
+	cudaMemcpy(hstResult, devResult, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 
-	cudaMemcpy(hstSrc, devSrc, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH, cudaMemcpyKind::cudaMemcpyDeviceToHost);
-
-	printArr2D(hstSrc);
+	printArr2D(hstResult);
 
 	return 0;
 }
