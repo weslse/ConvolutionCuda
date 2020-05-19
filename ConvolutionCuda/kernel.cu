@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
 /*
 // define 용어 설명
 //
@@ -44,8 +45,6 @@
 // Pitch = Width + padding size
 */
 
-// TODO : 다시 용어에 맞추어 리팩토링 할 것!!
-// N, P 등 어려운 단어를 알기 쉽게 이름을 바꾸어 다시 코딩할 것
 
 // 1D
 #define ARR_SIZE 7
