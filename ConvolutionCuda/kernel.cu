@@ -28,6 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <chrono>
+#include <iostream>
+
 
 /*
 // define 용어 설명
@@ -110,7 +113,15 @@ void printArr2D(float arr[O_TILE_WIDTH * O_TILE_HEIGHT]) {
 //	float* devResult = nullptr;
 //	cudaMalloc(&devResult, sizeof(float) * ARR_SIZE);
 //
+//	std::cout << "start parallelizing" << std::endl;
+//	std::cout << "elapsed in time: ";
+//	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
 //	convolution_1D_basic_kernel << < 1, ARR_SIZE >> > (devSrc, devMask, devResult, MASK_SIZE, ARR_SIZE);
+//
+//	std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+//	std::chrono::duration<double>  duration = end - start;
+//	std::cout << duration.count() * 1000 << std::endl;
+//	std::cout << "----------------------------------" << std::endl;
 //
 //	cudaMemcpy(hstResult, devResult, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 //
@@ -147,14 +158,23 @@ void printArr2D(float arr[O_TILE_WIDTH * O_TILE_HEIGHT]) {
 //	cudaMalloc(&devSrc, sizeof(float) * ARR_SIZE);
 //	cudaMemcpy(devSrc, hstSrc, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyHostToDevice);
 //
-//	
+//
 //	cudaMemcpyToSymbol(Mask, hstMask, sizeof(float) * MASK_SIZE);
 //
 //
 //	float* devResult = nullptr;
 //	cudaMalloc(&devResult, sizeof(float) * ARR_SIZE);
 //
+//	std::cout << "start parallelizing" << std::endl;
+//	std::cout << "elapsed in time: ";
+//	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+//
 //	convolution_1D_const_kernel << < 1, ARR_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
+//
+//	std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+//	std::chrono::duration<double>  duration = end - start;
+//	std::cout << duration.count() * 1000 << std::endl;
+//	std::cout << "----------------------------------" << std::endl;
 //
 //	cudaMemcpy(hstResult, devResult, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 //
@@ -212,7 +232,16 @@ void printArr2D(float arr[O_TILE_WIDTH * O_TILE_HEIGHT]) {
 //	float* devResult = nullptr;
 //	cudaMalloc(&devResult, sizeof(float) * ARR_SIZE);
 //
+//	std::cout << "start parallelizing" << std::endl;
+//	std::cout << "elapsed in time: ";
+//	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+//
 //	convolution_1D_halo_kernel << < ceil((float)ARR_SIZE / TILE_1D_SIZE), TILE_1D_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
+//
+//	std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+//	std::chrono::duration<double>  duration = end - start;
+//	std::cout << duration.count() * 1000 << std::endl;
+//	std::cout << "----------------------------------" << std::endl;
 //
 //	cudaMemcpy(hstResult, devResult, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 //
@@ -270,7 +299,16 @@ void printArr2D(float arr[O_TILE_WIDTH * O_TILE_HEIGHT]) {
 //	float* devResult = nullptr;
 //	cudaMalloc(&devResult, sizeof(float) * ARR_SIZE);
 //
+//	std::cout << "start parallelizing" << std::endl;
+//	std::cout << "elapsed in time: ";
+//	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+//
 //	convolution_1D_caching_kernel << < ceil((float)ARR_SIZE / TILE_1D_SIZE), TILE_1D_SIZE >> > (devSrc, devResult, MASK_SIZE, ARR_SIZE);
+//
+//	std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+//	std::chrono::duration<double>  duration = end - start;
+//	std::cout << duration.count() * 1000 << std::endl;
+//	std::cout << "----------------------------------" << std::endl;
 //
 //	cudaMemcpy(hstResult, devResult, sizeof(float) * ARR_SIZE, cudaMemcpyKind::cudaMemcpyDeviceToHost);
 //
@@ -285,93 +323,103 @@ void printArr2D(float arr[O_TILE_WIDTH * O_TILE_HEIGHT]) {
 // const float* __restrict__ M가 올바른 사용
 // 또한 책에서 소개한 부분에 오류가 있어
 // 인터넷에서 찾은 코드를 응용하였음
-#define W_SM ((TILE_WIDTH) + (MASK_WIDTH) - 1)
-__global__ void convolution_2D_tiled_kernel(float *inputData, float *outputData,
-	int width, int pitch, int height, int channels,
-	const float* __restrict__ M)
-{
-	__shared__ float N_ds[W_SM][W_SM];
-
-	int maskRadius = MASK_WIDTH / 2;
-
-	int dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
-	int destY = dest / W_SM;		//col of shared memory
-	int destX = dest % W_SM;		//row of shared memory
-	int srcY = blockIdx.y *TILE_WIDTH + destY - maskRadius; //row index to fetch data from input image
-	int srcX = blockIdx.x *TILE_WIDTH + destX - maskRadius;	//col index to fetch data from input image
-
-	if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
-		N_ds[destY][destX] = inputData[srcY * width + srcX];
-	else
-		N_ds[destY][destX] = 0;
-
-
-	dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
-	destY = dest / W_SM;
-	destX = dest % W_SM;
-	srcY = blockIdx.y *TILE_WIDTH + destY - maskRadius;
-	srcX = blockIdx.x *TILE_WIDTH + destX - maskRadius;
-	if (destY < W_SM) {
-		if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
-			N_ds[destY][destX] = inputData[srcY *width + srcX];
-		else
-			N_ds[destY][destX] = 0;
-	}
-
-	__syncthreads();
-
-	float output = 0.0f;
-	for (int y = 0; y < MASK_WIDTH; y++)
-		for (int x = 0; x < MASK_WIDTH; x++)
-			output += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * MASK_WIDTH + x];
-
-	int oY = blockIdx.y * TILE_WIDTH + threadIdx.y;
-	int oX = blockIdx.x * TILE_WIDTH + threadIdx.x;
-	
-	if (oY < height && oX < width)
-		outputData[oY * width + oX] = output;
-
-	__syncthreads();
-}
-
-int main()
-{
-	float hstSrc[IMG_WIDTH * IMG_WIDTH];
-	srand((unsigned int)time(NULL));
-
-	for (int i = 0; i < IMG_WIDTH; i++) {
-		for (int j = 0; j < IMG_WIDTH; j++) {
-			hstSrc[i * IMG_WIDTH + j] = 3;//rand() % 10;
-		}
-	}
-	float hstMask[MASK_WIDTH * MASK_WIDTH]
-		= { (1 / 9.f), (1 / 9.f), (1 / 9.f),
-			(1 / 9.f), (1 / 9.f), (1 / 9.f),
-			(1 / 9.f), (1 / 9.f), (1 / 9.f)
-	}; // 3*3 kernel mean filter
-
-	float hstResult[O_TILE_WIDTH * O_TILE_WIDTH] = { 0.f };
-
-	float* devSrc;
-	cudaError_t status;
-	status = cudaMalloc(&devSrc, sizeof(float) * IMG_WIDTH * IMG_WIDTH);
-	cudaMemcpy(devSrc, hstSrc, sizeof(float) * IMG_WIDTH * IMG_WIDTH, cudaMemcpyKind::cudaMemcpyHostToDevice);
-
-	float* devMask;
-	cudaMalloc(&devMask, sizeof(float) * MASK_WIDTH * MASK_WIDTH);
-	cudaMemcpy(devMask, hstMask, sizeof(float) * MASK_WIDTH * MASK_WIDTH, cudaMemcpyKind::cudaMemcpyHostToDevice);
-
-
-	float* devResult;
-	cudaMalloc(&devResult, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH);
-
-	dim3 gridDim = dim3(ceil((float)IMG_WIDTH / TILE_WIDTH), ceil((float)IMG_WIDTH / TILE_WIDTH));
-	dim3 blockDim = dim3(TILE_WIDTH, TILE_WIDTH);
-	convolution_2D_tiled_kernel << < gridDim, blockDim >> > (devSrc, devResult, IMG_WIDTH, PITCH, IMG_WIDTH, 1, devMask);
-
-	cudaMemcpy(hstResult, devResult, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH, cudaMemcpyKind::cudaMemcpyDeviceToHost);
-
-	printArr2D(hstResult);
-
-	return 0;
-}
+//#define W_SM ((TILE_WIDTH) + (MASK_WIDTH) - 1)
+//__global__ void convolution_2D_tiled_kernel(float *inputData, float *outputData,
+//	int width, int pitch, int height, int channels,
+//	const float* __restrict__ M)
+//{
+//	__shared__ float N_ds[W_SM][W_SM];
+//
+//	int maskRadius = MASK_WIDTH / 2;
+//
+//	int dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
+//	int destY = dest / W_SM;		//col of shared memory
+//	int destX = dest % W_SM;		//row of shared memory
+//	int srcY = blockIdx.y *TILE_WIDTH + destY - maskRadius; //row index to fetch data from input image
+//	int srcX = blockIdx.x *TILE_WIDTH + destX - maskRadius;	//col index to fetch data from input image
+//
+//	if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
+//		N_ds[destY][destX] = inputData[srcY * width + srcX];
+//	else
+//		N_ds[destY][destX] = 0;
+//
+//
+//	dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
+//	destY = dest / W_SM;
+//	destX = dest % W_SM;
+//	srcY = blockIdx.y *TILE_WIDTH + destY - maskRadius;
+//	srcX = blockIdx.x *TILE_WIDTH + destX - maskRadius;
+//	if (destY < W_SM) {
+//		if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
+//			N_ds[destY][destX] = inputData[srcY *width + srcX];
+//		else
+//			N_ds[destY][destX] = 0;
+//	}
+//
+//	__syncthreads();
+//
+//	float output = 0.0f;
+//	for (int y = 0; y < MASK_WIDTH; y++)
+//		for (int x = 0; x < MASK_WIDTH; x++)
+//			output += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * MASK_WIDTH + x];
+//
+//	int oY = blockIdx.y * TILE_WIDTH + threadIdx.y;
+//	int oX = blockIdx.x * TILE_WIDTH + threadIdx.x;
+//	
+//	if (oY < height && oX < width)
+//		outputData[oY * width + oX] = output;
+//
+//	__syncthreads();
+//}
+//
+//int main()
+//{
+//	float hstSrc[IMG_WIDTH * IMG_WIDTH];
+//	srand((unsigned int)time(NULL));
+//
+//	for (int i = 0; i < IMG_WIDTH; i++) {
+//		for (int j = 0; j < IMG_WIDTH; j++) {
+//			hstSrc[i * IMG_WIDTH + j] = 3;//rand() % 10;
+//		}
+//	}
+//	float hstMask[MASK_WIDTH * MASK_WIDTH]
+//		= { (1 / 9.f), (1 / 9.f), (1 / 9.f),
+//			(1 / 9.f), (1 / 9.f), (1 / 9.f),
+//			(1 / 9.f), (1 / 9.f), (1 / 9.f)
+//	}; // 3*3 kernel mean filter
+//
+//	float hstResult[O_TILE_WIDTH * O_TILE_WIDTH] = { 0.f };
+//
+//	float* devSrc;
+//	cudaError_t status;
+//	status = cudaMalloc(&devSrc, sizeof(float) * IMG_WIDTH * IMG_WIDTH);
+//	cudaMemcpy(devSrc, hstSrc, sizeof(float) * IMG_WIDTH * IMG_WIDTH, cudaMemcpyKind::cudaMemcpyHostToDevice);
+//
+//	float* devMask;
+//	cudaMalloc(&devMask, sizeof(float) * MASK_WIDTH * MASK_WIDTH);
+//	cudaMemcpy(devMask, hstMask, sizeof(float) * MASK_WIDTH * MASK_WIDTH, cudaMemcpyKind::cudaMemcpyHostToDevice);
+//
+//
+//	float* devResult;
+//	cudaMalloc(&devResult, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH);
+//
+//
+//	std::cout << "start parallelizing" << std::endl;
+//	std::cout << "elapsed in time: ";
+//	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+//
+//	dim3 gridDim = dim3(ceil((float)IMG_WIDTH / TILE_WIDTH), ceil((float)IMG_WIDTH / TILE_WIDTH));
+//	dim3 blockDim = dim3(TILE_WIDTH, TILE_WIDTH);
+//	convolution_2D_tiled_kernel << < gridDim, blockDim >> > (devSrc, devResult, IMG_WIDTH, PITCH, IMG_WIDTH, 1, devMask);
+//	
+//	std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+//	std::chrono::duration<double>  duration = end - start;
+//	std::cout << duration.count() * 1000 << std::endl;
+//	std::cout << "----------------------------------" << std::endl;
+//
+//	cudaMemcpy(hstResult, devResult, sizeof(float) * O_TILE_WIDTH * O_TILE_WIDTH, cudaMemcpyKind::cudaMemcpyDeviceToHost);
+//
+//	printArr2D(hstResult);
+//
+//	return 0;
+//}
